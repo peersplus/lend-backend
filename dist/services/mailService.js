@@ -1,0 +1,86 @@
+import nodemailer from 'nodemailer';
+import { env } from '../config/env.js';
+function smtpReady() {
+    return Boolean(env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass && (env.mailFrom || env.smtpUser));
+}
+function getFromAddress(dealerName) {
+    const fallbackAddress = env.mailFrom || env.smtpUser || 'no-reply@localhost';
+    const trimmedName = dealerName?.trim();
+    if (!trimmedName)
+        return fallbackAddress;
+    if (fallbackAddress.includes('<') && fallbackAddress.includes('>'))
+        return fallbackAddress;
+    if (fallbackAddress.includes('@'))
+        return `${trimmedName} <${fallbackAddress}>`;
+    return trimmedName;
+}
+let transporter = null;
+function getTransporter() {
+    if (!smtpReady())
+        return null;
+    if (transporter)
+        return transporter;
+    transporter = nodemailer.createTransport({
+        host: env.smtpHost,
+        port: env.smtpPort,
+        secure: env.smtpSecure,
+        auth: {
+            user: env.smtpUser,
+            pass: env.smtpPass,
+        },
+    });
+    return transporter;
+}
+export async function sendMail(input) {
+    const tx = getTransporter();
+    if (!tx) {
+        console.warn('[mail] SMTP not configured. Skipping email send.');
+        return { sent: false, skipped: true, reason: 'smtp_not_configured' };
+    }
+    try {
+        const info = await tx.sendMail({
+            from: getFromAddress(input._dealerName),
+            to: input.to,
+            subject: input.subject,
+            html: input.html,
+            text: input.text,
+        });
+        console.log(`[mail] ✅ Sent → ${input.to} | subject: "${input.subject}" | msgId: ${info.messageId}`);
+        return { sent: true, skipped: false };
+    }
+    catch (err) {
+        console.error(`[mail] ❌ FAILED → ${input.to} | subject: "${input.subject}" | error: ${err?.message}`);
+        throw err;
+    }
+}
+export function staffVerificationTemplate(params) {
+    const { fullName, roleLabel, verificationLink, loginUrl } = params;
+    const text = [
+        `Hi ${fullName},`,
+        '',
+        `Your ${roleLabel} account has been created.`,
+        'Please verify your email using the link below:',
+        verificationLink,
+        '',
+        `After verification, log in here: ${loginUrl}`,
+    ].join('\n');
+    const html = `
+    <div style="font-family: Arial, sans-serif; line-height:1.5; color:#111;">
+      <h2 style="margin:0 0 12px;">Welcome to Auto Advant</h2>
+      <p>Hi ${fullName},</p>
+      <p>Your <strong>${roleLabel}</strong> account has been created.</p>
+      <p>Please verify your email to activate access:</p>
+      <p>
+        <a href="${verificationLink}" style="display:inline-block;padding:10px 16px;background:#0f766e;color:#fff;text-decoration:none;border-radius:8px;">
+          Verify Email
+        </a>
+      </p>
+      <p>If the button does not work, open this link in your browser:</p>
+      <p><a href="${verificationLink}">${verificationLink}</a></p>
+      <hr style="border:none;border-top:1px solid #eee;margin:16px 0;" />
+      <p>After verification, sign in here:</p>
+      <p><a href="${loginUrl}">${loginUrl}</a></p>
+    </div>
+  `;
+    return { text, html };
+}

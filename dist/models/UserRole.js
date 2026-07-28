@@ -1,0 +1,12 @@
+import mongoose, { Schema } from 'mongoose';
+const UserRoleSchema = new Schema({
+    id: { type: String, required: true, unique: true, index: true },
+    user_id: { type: String, required: true, unique: true, index: true },
+    role: {
+        type: String,
+        required: true,
+        enum: ['superadmin', 'super_admin', 'dealer_admin', 'sales_admin', 'branch_admin', 'gro', 'sales', 'security', 'user', 'reporting'],
+    },
+}, { versionKey: false, collection: 'user_roles' });
+export const UserRole = mongoose.models['UserRole'] ||
+    mongoose.model('UserRole', UserRoleSchema);

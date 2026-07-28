@@ -6,11 +6,18 @@ dotenv.config();
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
+const parseOrigins = (value?: string) =>
+  (value || 'http://localhost:8080,http://localhost:8081, https://www.autoadvant.com, https://autoadvant.com, https://autoadvant-staging.web.app, https://autoadvant-staging.firebaseapp.com, https://autoadvant.web.app, https://autoadvant.firebaseapp.com')
+    .split(',')
+    .map((origin) => origin.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean);
+
 export const env = {
   port: Number(process.env.PORT || 4000),
   nodeEnv: process.env.NODE_ENV || 'development',
   mongoUri: process.env.MONGODB_URI || '',
-  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:8080',
+  corsOrigin: parseOrigins(process.env.CORS_ORIGIN || process.env.CORS_ORIGINS)[0] || 'http://localhost:8080',
+  corsOrigins: Array.from(new Set(parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || 'http://localhost:8080,http://localhost:8081'))),
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
   firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
   firebasePrivateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
@@ -36,8 +43,4 @@ export const env = {
   oauthStateSecret: process.env.OAUTH_STATE_SECRET || 'change-me-in-production',
   // Public frontend URL (used for customer-facing links in emails)
   publicFrontendUrl: process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080',
-  // AI Agent — Gemini (OpenAI-compatible endpoint)
-  geminiApiKey: process.env.GEMINI_API_KEY || 'AQ.Ab8RN6LQLd6VNbuq0FMEkMwAolaXigs1-JlOWt4pdgo-0rz6GA.',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
-  geminiBaseUrl: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai',
 };

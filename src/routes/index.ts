@@ -4,6 +4,30 @@ import { dbQueryController } from '../controllers/dbController.js';
 import { invokeFunctionController } from '../controllers/functionsController.js';
 import { rpcController } from '../controllers/rpcController.js';
 import {
+  listBrandsWithLocationsController,
+  updateBrandBusinessUnitController,
+  listBrandLocationsController,
+  linkBrandLocationController,
+  unlinkBrandLocationController,
+} from '../controllers/brandLocationController.js';
+import {
+  listBusinessUnitsController,
+  getBusinessUnitController,
+  createBusinessUnitController,
+  updateBusinessUnitController,
+  deleteBusinessUnitController,
+  listSalesOfficesController,
+  getSalesOfficeController,
+  createSalesOfficeController,
+  updateSalesOfficeController,
+  deleteSalesOfficeController,
+  listPlantsController,
+  getPlantController,
+  createPlantController,
+  updatePlantController,
+  deletePlantController,
+} from '../controllers/hierarchyController.js';
+import {
   listController,
   publicUrlController,
   removeController,
@@ -11,6 +35,7 @@ import {
   uploadController,
 } from '../controllers/storageController.js';
 import { meController, resendVerificationController } from '../controllers/authController.js';
+import { syncAuthUserController } from '../controllers/authSyncController.js';
 import { requireAuth, requireSuperAdmin } from '../middleware/auth.js';
 import {
   createLocationController,
@@ -50,6 +75,7 @@ import {
   updateTestDriveController,
 } from '../controllers/testDriveController.js';
 import { publicBookTestDriveController } from '../controllers/publicBookingController.js';
+import { publicLandingStatsController } from '../controllers/publicLandingStatsController.js';
 import { submitTestDriveFeedbackController } from '../controllers/feedbackController.js';
 import { previewEmailTemplateController } from '../controllers/emailTemplateController.js';
 import {
@@ -158,21 +184,24 @@ import {
   uploadCustomerDocumentController,
 } from '../controllers/customerBookingController.js';
 import {
-  deleteReportDispatchConfigController,
-  downloadReportController,
-  getReportDispatchConfigController,
-  listReportDispatchConfigsController,
-  reportRecipientsPreviewController,
-  runReportDispatchJobNowController,
-  sendReportNowController,
-  upsertReportDispatchConfigController,
-} from '../controllers/reportController.js';
-import {
-  chatStreamController,
-  deleteConversationController,
-  getConversationController,
-  listConversationsController,
-} from '../controllers/agentController.js';
+  createBookingController,
+  createItemController,
+  createMessageController,
+  createRequestController,
+  createRequestOfferController,
+  deleteItemController,
+  deleteRequestController,
+  getProfileController as getPeerProfileController,
+  listBookingsController,
+  listItemsController,
+  listMessagesController,
+  listRequestOffersController,
+  listRequestsController,
+  updateBookingController,
+  updateItemController,
+  updateProfileController as updatePeerProfileController,
+  updateRequestController,
+} from '../controllers/listingController.js';
 import {
   fleetOverviewController,
   vehicleAvailabilityController,
@@ -228,8 +257,12 @@ apiRouter.post('/storage/:bucket/public-url', publicUrlController);
 apiRouter.post('/storage/:bucket/signed-url', signedUrlController);
 apiRouter.post('/storage/:bucket/remove', removeController);
 
+// Public landing stats (guest-safe)
+apiRouter.get('/public/landing-stats', publicLandingStatsController);
+
 // Auth
 apiRouter.get('/auth/me', requireAuth, meController);
+apiRouter.post('/auth/sync', syncAuthUserController);
 apiRouter.post('/auth/resend-verification', resendVerificationController);
 
 // Locations
@@ -318,6 +351,30 @@ apiRouter.get('/profiles/:id', requireAuth, getProfileController);
 apiRouter.post('/profiles', requireAuth, upsertProfileController);
 apiRouter.patch('/profiles/:id', requireAuth, updateProfileController);
 
+// Lending / peer-to-peer items
+apiRouter.get('/items', listItemsController);
+apiRouter.post('/items', requireAuth, createItemController);
+apiRouter.patch('/items/:id', requireAuth, updateItemController);
+apiRouter.delete('/items/:id', requireAuth, deleteItemController);
+
+apiRouter.get('/bookings', requireAuth, listBookingsController);
+apiRouter.post('/bookings', requireAuth, createBookingController);
+apiRouter.patch('/bookings/:id', requireAuth, updateBookingController);
+
+apiRouter.get('/requests', requireAuth, listRequestsController);
+apiRouter.post('/requests', requireAuth, createRequestController);
+apiRouter.patch('/requests/:id', requireAuth, updateRequestController);
+apiRouter.delete('/requests/:id', requireAuth, deleteRequestController);
+
+apiRouter.post('/request-offers', requireAuth, createRequestOfferController);
+apiRouter.get('/request-offers', listRequestOffersController);
+
+apiRouter.get('/messages', requireAuth, listMessagesController);
+apiRouter.post('/messages', requireAuth, createMessageController);
+
+apiRouter.get('/peer-profile/me', requireAuth, getPeerProfileController);
+apiRouter.patch('/peer-profile/me', requireAuth, updatePeerProfileController);
+
 // User Roles
 apiRouter.get('/user-roles', requireAuth, listRolesController);
 apiRouter.get('/user-roles/:userId', requireAuth, getRoleController);
@@ -385,19 +442,31 @@ apiRouter.post('/firebase/users/:uid/claims', requireAuth, setCustomClaimsContro
 // Firebase – Test Drive Notifications
 apiRouter.post('/firebase/notify/test-drive', requireAuth, sendTestDriveNotificationController);
 
-// Reports
-apiRouter.get('/reports/download', requireAuth, downloadReportController);
-apiRouter.get('/reports/recipients-preview', requireAuth, reportRecipientsPreviewController);
-apiRouter.post('/reports/send', requireAuth, sendReportNowController);
-apiRouter.get('/reports/dispatch-config', requireAuth, listReportDispatchConfigsController);
-apiRouter.get('/reports/dispatch-config/:locationId', requireAuth, getReportDispatchConfigController);
-apiRouter.put('/reports/dispatch-config', requireAuth, upsertReportDispatchConfigController);
-apiRouter.delete('/reports/dispatch-config/:locationId', requireAuth, deleteReportDispatchConfigController);
-apiRouter.post('/reports/dispatch-jobs/run-now', requireAuth, requireSuperAdmin, runReportDispatchJobNowController);
+// ── Hierarchy: Business Units ─────────────────────────────────────────────────
+apiRouter.get('/business-units', requireAuth, listBusinessUnitsController);
+apiRouter.get('/business-units/:id', requireAuth, getBusinessUnitController);
+apiRouter.post('/business-units', requireAuth, createBusinessUnitController);
+apiRouter.patch('/business-units/:id', requireAuth, updateBusinessUnitController);
+apiRouter.delete('/business-units/:id', requireAuth, deleteBusinessUnitController);
 
-// AI Agent
-apiRouter.post('/agent/chat', requireAuth, chatStreamController);
-apiRouter.get('/agent/conversations', requireAuth, listConversationsController);
-apiRouter.get('/agent/conversations/:id', requireAuth, getConversationController);
-apiRouter.delete('/agent/conversations/:id', requireAuth, deleteConversationController);
+// ── Hierarchy: Sales Offices ──────────────────────────────────────────────────
+apiRouter.get('/sales-offices', requireAuth, listSalesOfficesController);
+apiRouter.get('/sales-offices/:id', requireAuth, getSalesOfficeController);
+apiRouter.post('/sales-offices', requireAuth, createSalesOfficeController);
+apiRouter.patch('/sales-offices/:id', requireAuth, updateSalesOfficeController);
+apiRouter.delete('/sales-offices/:id', requireAuth, deleteSalesOfficeController);
+
+// ── Hierarchy: Plants ─────────────────────────────────────────────────────────
+apiRouter.get('/plants', requireAuth, listPlantsController);
+apiRouter.get('/plants/:id', requireAuth, getPlantController);
+apiRouter.post('/plants', requireAuth, createPlantController);
+apiRouter.patch('/plants/:id', requireAuth, updatePlantController);
+apiRouter.delete('/plants/:id', requireAuth, deletePlantController);
+
+// ── Brand ↔ Location management ───────────────────────────────────────────────
+apiRouter.get('/brands-with-locations', requireAuth, listBrandsWithLocationsController);
+apiRouter.patch('/brands/:id/business-unit', requireAuth, updateBrandBusinessUnitController);
+apiRouter.get('/brand-locations', requireAuth, listBrandLocationsController);
+apiRouter.post('/brand-locations', requireAuth, linkBrandLocationController);
+apiRouter.delete('/brand-locations/:brandId/:locationId', requireAuth, unlinkBrandLocationController);
 

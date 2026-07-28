@@ -7,7 +7,12 @@ export interface IProfile extends Document {
   email: string;
   phone: string | null;
   avatar_url: string | null;
+  neighborhood: string | null;
+  lat: number | null;
+  lng: number | null;
+  fcm_tokens: string[];
   location_id: string | null;
+  brand_ids: string[];
   is_active: boolean;
   on_leave: boolean;
   leave_start_date: string | null;
@@ -25,7 +30,12 @@ const ProfileSchema = new Schema<IProfile>(
     email: { type: String, required: true, index: true },
     phone: { type: String, default: null },
     avatar_url: { type: String, default: null },
+    neighborhood: { type: String, default: null },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+    fcm_tokens: { type: [String], default: [] },
     location_id: { type: String, default: null, index: true },
+    brand_ids: { type: [String], default: [] },
     is_active: { type: Boolean, default: true },
     on_leave: { type: Boolean, default: false },
     leave_start_date: { type: String, default: null },

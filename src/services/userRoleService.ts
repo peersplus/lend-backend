@@ -1,16 +1,40 @@
 import { randomUUID } from 'node:crypto';
 import { UserRole, AppRole } from '../models/UserRole.js';
 
+const DEFAULT_SUPERADMIN_EMAILS = ['yogitadheerajvarshney@gmail.com'];
+
+function normalizeEmail(email?: string | null): string {
+  return (email || '').trim().toLowerCase();
+}
+
+export function resolveAppRole(email?: string | null): AppRole {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return 'user';
+
+  const configuredEmails = (process.env.SUPERADMIN_EMAILS || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+
+  const superadminEmails = new Set([...DEFAULT_SUPERADMIN_EMAILS, ...configuredEmails]);
+  return superadminEmails.has(normalizedEmail) ? 'superadmin' : 'user';
+}
+
 function lean(doc: any) {
   const o = doc.toObject ? doc.toObject() : { ...doc };
   delete o._id;
   return o;
 }
 
-export async function getRoleByUserId(userId: string) {
+export async function getRoleByUserId(userId: string, email?: string | null) {
   const doc = await UserRole.findOne({ user_id: userId }).lean();
-  if (!doc) return null;
-  const o = { ...doc } as any; delete o._id; return o;
+  if (doc) {
+    const o = { ...doc } as any;
+    delete o._id;
+    return o;
+  }
+
+  return { user_id: userId, role: resolveAppRole(email) };
 }
 
 export async function listUserRoles(filters: Record<string, unknown> = {}) {

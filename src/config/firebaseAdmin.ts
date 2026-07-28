@@ -1,10 +1,22 @@
+import https from 'node:https';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { env } from './env.js';
 
 let initialized = false;
 
+function configureTlsForLocalDevelopment() {
+  const shouldRelaxTls = env.nodeEnv !== 'production' && process.env.FIREBASE_AUTH_SKIP_TLS_VERIFY !== 'false';
+
+  if (!shouldRelaxTls) {
+    return;
+  }
+  https.globalAgent.options.rejectUnauthorized = false;
+}
+
 export function initFirebaseAdmin() {
+  configureTlsForLocalDevelopment();
+
   if (initialized || getApps().length > 0) {
     initialized = true;
     return;
@@ -28,6 +40,8 @@ export function initFirebaseAdmin() {
 }
 
 export function verifyIdToken(idToken: string) {
+  configureTlsForLocalDevelopment();
+
   if (!getApps().length) {
     throw new Error('Firebase Admin is not initialized.');
   }

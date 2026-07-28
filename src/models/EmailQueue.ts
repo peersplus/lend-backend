@@ -10,12 +10,6 @@ export interface IEmailMessage {
   html: string;
   text?: string;
   label?: string;
-  attachments?: Array<{
-    filename: string;
-    content: string;
-    contentType?: string;
-    encoding?: 'base64';
-  }>;
   queued_at: string;
   [key: string]: unknown;
 }

@@ -4,6 +4,7 @@ import { UserRole } from '../models/UserRole.js';
 import { Profile } from '../models/Profile.js';
 import { Location } from '../models/Location.js';
 import { applyLocationScope } from '../middleware/locationFilter.js';
+import { resolveAppRole } from '../services/userRoleService.js';
 
 import { z } from 'zod';
 
@@ -75,7 +76,7 @@ export async function attachAuthUser(req: Request, _res: Response, next: NextFun
         UserRole.findOne({ user_id: decoded.uid }, { role: 1 }).lean(),
         Profile.findOne({ user_id: decoded.uid }, { location_id: 1 }).lean(),
       ]);
-      req.authUser.role = (roleDoc?.role as string | undefined) ?? undefined;
+      req.authUser.role = (roleDoc?.role as string | undefined) ?? resolveAppRole(decoded.email ?? undefined);
       req.authUser.location_id = (profileDoc as any)?.location_id ?? null;
 
       // Resolve dealer_id via the user's assigned location
@@ -120,7 +121,6 @@ const LOCATION_SCOPED_TABLES = new Set([
   'location_blocked_slots',
   'location_operating_hours',
   'location_special_periods',
-  'sales_tasks'
 ]);
 
 /** Tables scoped to a dealer group via `dealer_id`. */

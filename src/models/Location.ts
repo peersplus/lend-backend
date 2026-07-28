@@ -3,11 +3,21 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface ILocation extends Document {
   id: string;
   dealer_id: string | null;
+  orgId: string | null;
+  businessUnitId: string | null;
+  businessUnitName: string | null;
+  salesOfficeId: string | null;
+  salesOfficeName: string | null;
+  plantId: string | null;
+  plantName: string | null;
+  brandId: string | null;
+  brandName: string | null;
+  locationCode: string | null;
+  externalLocationId: string | null;
   name: string;
   city: string | null;
   state: string | null;
   country: string | null;
-  brands: { name: string; is_active: boolean }[];
   address: string | null;
   pincode: string | null;
   phone: string | null;
@@ -31,11 +41,21 @@ const LocationSchema = new Schema<ILocation>(
   {
     id: { type: String, required: true, unique: true, index: true },
     dealer_id: { type: String, default: null, index: true },
+    orgId: { type: String, default: null, index: true },
+    businessUnitId: { type: String, default: null, index: true },
+    businessUnitName: { type: String, default: null },
+    salesOfficeId: { type: String, default: null, index: true },
+    salesOfficeName: { type: String, default: null },
+    plantId: { type: String, default: null, index: true },
+    plantName: { type: String, default: null },
+    brandId: { type: String, default: null, index: true },
+    brandName: { type: String, default: null },
+    locationCode: { type: String, default: null, unique: true, sparse: true, index: true },
+    externalLocationId: { type: String, default: null, unique: true, sparse: true, index: true },
     name: { type: String, required: true },
     city: { type: String, default: null },
     state: { type: String, default: null },
     country: { type: String, default: null },
-    brands: { type: [{ name: String, is_active: Boolean }], default: [] },
     address: { type: String, default: null },
     pincode: { type: String, default: null },
     phone: { type: String, default: null },
@@ -58,8 +78,16 @@ const LocationSchema = new Schema<ILocation>(
 );
 
 LocationSchema.pre('save', function (next) {
+  if (!this.orgId && this.dealer_id) {
+    this.orgId = this.dealer_id;
+  }
+  if (!this.dealer_id && this.orgId) {
+    this.dealer_id = this.orgId;
+  }
   this.updated_at = new Date().toISOString();
   next();
 });
+
+LocationSchema.index({ orgId: 1, businessUnitId: 1, salesOfficeId: 1, plantId: 1 });
 
 export const Location = mongoose.models['Location'] as mongoose.Model<ILocation> || mongoose.model<ILocation>('Location', LocationSchema);

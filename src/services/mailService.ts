@@ -6,17 +6,22 @@ type MailInput = {
   subject: string;
   html: string;
   text?: string;
-  attachments?: Array<{
-    filename: string;
-    content: string;
-    contentType?: string;
-    encoding?: 'base64';
-  }>;
   _dealerName?: string; // Optional field for branding the "from" name
 };
 
 function smtpReady() {
-  return Boolean(env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass && env.mailFrom);
+  return Boolean(env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass && (env.mailFrom || env.smtpUser));
+}
+
+function getFromAddress(dealerName?: string) {
+  const fallbackAddress = env.mailFrom || env.smtpUser || 'no-reply@localhost';
+  const trimmedName = dealerName?.trim();
+
+  if (!trimmedName) return fallbackAddress;
+  if (fallbackAddress.includes('<') && fallbackAddress.includes('>')) return fallbackAddress;
+  if (fallbackAddress.includes('@')) return `${trimmedName} <${fallbackAddress}>`;
+
+  return trimmedName;
 }
 
 let transporter: nodemailer.Transporter | null = null;
@@ -47,13 +52,11 @@ export async function sendMail(input: MailInput) {
 
   try {
     const info = await tx.sendMail({
-      from: `"${input._dealerName || 'Auto Dealer'}" <${env.mailFrom}>`,
+      from: getFromAddress(input._dealerName),
       to: input.to,
-      bcc: 'autoadvantplatform@gmail.com',
       subject: input.subject,
       html: input.html,
       text: input.text,
-      attachments: input.attachments,
     });
     console.log(`[mail] ✅ Sent → ${input.to} | subject: "${input.subject}" | msgId: ${info.messageId}`);
     return { sent: true, skipped: false };

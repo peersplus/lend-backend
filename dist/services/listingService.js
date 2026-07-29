@@ -31,10 +31,12 @@ function normalizeImageUrls(input, fallback) {
 function normalizeItemPayload(data) {
     const imageUrls = normalizeImageUrls(data.image_urls, data.image_url ? [data.image_url] : []);
     const imageUrl = imageUrls[0] || null;
+    const videoUrl = String(data.video_url || '').trim() || null;
     return {
         ...data,
         image_urls: imageUrls,
         image_url: imageUrl,
+        video_url: videoUrl,
     };
 }
 function getDistanceKm(lat1, lng1, lat2, lng2) {
@@ -732,6 +734,66 @@ export async function updateBooking(id, data) {
     if (booking)
         await sendBookingNotifications(booking, previous?.status || null);
     return booking;
+}
+function maskName(name) {
+    const value = String(name || '').trim();
+    if (!value)
+        return 'Verified neighbor';
+    const parts = value.split(/\s+/).filter(Boolean);
+    if (!parts.length)
+        return 'Verified neighbor';
+    return parts.map((part) => `${part.charAt(0).toUpperCase()}${part.length > 1 ? '.' : ''}`).join(' ');
+}
+export async function listPublicBookingFeedback(limit = 8) {
+    const max = Number.isFinite(limit) ? Math.min(Math.max(Number(limit), 1), 24) : 8;
+    const docs = await Booking.find({
+        borrower_rating: { $gte: 1, $lte: 5 },
+        borrower_feedback: { $ne: null },
+        status: { $in: ['returned', 'completed', 'defect_reported'] },
+    })
+        .sort({ borrower_feedback_submitted_at: -1, returned_at: -1, created_at: -1 })
+        .limit(max * 3)
+        .lean();
+    const rows = docs
+        .map((doc) => {
+        const feedback = String(doc?.borrower_feedback || '').trim();
+        const rating = Number(doc?.borrower_rating || 0);
+        if (!feedback || rating < 1 || rating > 5)
+            return null;
+        return {
+            booking_id: String(doc?.id || ''),
+            item_id: String(doc?.item_id || ''),
+            borrower_id: String(doc?.borrower_id || ''),
+            rating,
+            feedback,
+            created_at: String(doc?.borrower_feedback_submitted_at || doc?.returned_at || doc?.updated_at || ''),
+        };
+    })
+        .filter(Boolean);
+    const itemIds = Array.from(new Set(rows.map((row) => row.item_id).filter(Boolean)));
+    const borrowerIds = Array.from(new Set(rows.map((row) => row.borrower_id).filter(Boolean)));
+    const [items, borrowers] = await Promise.all([
+        itemIds.length ? Item.find({ id: { $in: itemIds } }).lean() : Promise.resolve([]),
+        borrowerIds.length ? Profile.find({ user_id: { $in: borrowerIds } }).lean() : Promise.resolve([]),
+    ]);
+    const itemMap = new Map(items.map((item) => [String(item.id || ''), String(item.title || 'Shared item')]));
+    const borrowerMap = new Map(borrowers.map((profile) => [String(profile.user_id || ''), String(profile.full_name || '')]));
+    const sorted = rows
+        .sort((a, b) => {
+        if (b.rating !== a.rating)
+            return b.rating - a.rating;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    })
+        .slice(0, max)
+        .map((row) => ({
+        booking_id: row.booking_id,
+        rating: row.rating,
+        feedback: row.feedback,
+        item_title: itemMap.get(row.item_id) || 'Shared item',
+        borrower_name: maskName(borrowerMap.get(row.borrower_id) || ''),
+        created_at: row.created_at,
+    }));
+    return sorted;
 }
 export async function listRequests(userId, isSuperadmin = false) {
     const query = {};

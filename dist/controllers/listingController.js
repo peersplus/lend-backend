@@ -8,6 +8,17 @@ export async function listItemsController(req, res) {
         res.status(500).json({ data: null, error: { message: error?.message || 'Failed to load items' } });
     }
 }
+export async function listPublicBookingFeedbackController(req, res) {
+    try {
+        const rawLimit = Number(req.query.limit || 8);
+        const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 24) : 8;
+        const data = await listingService.listPublicBookingFeedback(limit);
+        res.json({ data, error: null });
+    }
+    catch (error) {
+        res.status(500).json({ data: null, error: { message: error?.message || 'Failed to load booking feedback' } });
+    }
+}
 export async function createItemController(req, res) {
     try {
         if (!req.authUser?.uid)

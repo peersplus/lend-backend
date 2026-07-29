@@ -1,5 +1,8 @@
 import express from 'express';
 import multer from 'multer';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { dbQueryController } from '../controllers/dbController.js';
 import { invokeFunctionController } from '../controllers/functionsController.js';
 import { rpcController } from '../controllers/rpcController.js';
@@ -17,6 +20,7 @@ import { bulkReassignController, createTestDriveController, deleteTestDriveContr
 import { publicBookTestDriveController } from '../controllers/publicBookingController.js';
 import { publicLandingStatsController } from '../controllers/publicLandingStatsController.js';
 import { submitTestDriveFeedbackController } from '../controllers/feedbackController.js';
+import { listAppFeedbackController, submitAppFeedbackController } from '../controllers/appFeedbackController.js';
 import { previewEmailTemplateController } from '../controllers/emailTemplateController.js';
 import { listIntegrationsController, listAllIntegrationsController, upsertIntegrationController, deleteIntegrationController, testIntegrationController, } from '../controllers/integrationController.js';
 import { startGoogleOAuth, googleOAuthCallback, startOutlookOAuth, outlookOAuthCallback, } from '../controllers/oauthController.js';
@@ -33,9 +37,28 @@ import { cancelConflictingBookingsController, createBlockedSlotController, delet
 import { createUserController, deleteUserController, disableUserController, enableUserController, getUserController, sendTestDriveNotificationController, setCustomClaimsController, updateUserController, } from '../controllers/firebaseController.js';
 import { createCarBookingController, getCarBookingController, listCarBookingsController, updateCarBookingController, } from '../controllers/carBookingController.js';
 import { cancelCustomerBookingController, getCustomerBookingController, rebookCustomerController, rescheduleCustomerBookingController, uploadCustomerDocumentController, } from '../controllers/customerBookingController.js';
-import { createBookingController, createItemController, createMessageController, createRequestController, createRequestOfferController, deleteItemController, deleteRequestController, getProfileController as getPeerProfileController, listBookingsController, listItemsController, listMessagesController, listRequestOffersController, listRequestsController, updateBookingController, updateItemController, updateProfileController as updatePeerProfileController, updateRequestController, } from '../controllers/listingController.js';
+import { createBookingController, createItemController, createMessageController, createRequestController, createRequestOfferController, deleteItemController, deleteRequestController, getProfileController as getPeerProfileController, listBookingsController, listPublicBookingFeedbackController, listItemsController, listMessagesController, listRequestOffersController, listRequestsController, updateBookingController, updateItemController, updateProfileController as updatePeerProfileController, updateRequestController, } from '../controllers/listingController.js';
 import { fleetOverviewController, vehicleAvailabilityController, listTransitsController, createTransitController, dispatchTransitController, arriveTransitController, cancelTransitController, locationSecurityController, assignReceiverController, receiveVehicleController, incomingTransitsController, createTransitRequestController, listTransitRequestsController, approveTransitRequestController, rejectTransitRequestController, cancelTransitRequestController, } from '../controllers/vehicleFleetController.js';
-const upload = multer({ storage: multer.memoryStorage() });
+const tempUploadDir = path.join(os.tmpdir(), 'peersplus-media-uploads');
+fs.mkdirSync(tempUploadDir, { recursive: true });
+const mediaUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, tempUploadDir),
+        filename: (_req, file, cb) => {
+            const ext = path.extname(file.originalname || '').slice(0, 16);
+            cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${ext}`);
+        },
+    }),
+    limits: {
+        fileSize: 300 * 1024 * 1024,
+    },
+});
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 20 * 1024 * 1024,
+    },
+});
 export const apiRouter = express.Router();
 // Generic DB query (fallback for all other collections)
 apiRouter.post('/db/query', dbQueryController);
@@ -60,13 +83,25 @@ apiRouter.patch('/fleet/transit-requests/:id/approve', requireAuth, approveTrans
 apiRouter.patch('/fleet/transit-requests/:id/reject', requireAuth, rejectTransitRequestController);
 apiRouter.patch('/fleet/transit-requests/:id/cancel', requireAuth, cancelTransitRequestController);
 // Storage
-apiRouter.post('/storage/:bucket/upload', upload.single('file'), uploadController);
+apiRouter.post('/storage/:bucket/upload', (req, res, next) => {
+    mediaUpload.single('file')(req, res, (error) => {
+        if (!error)
+            return next();
+        if (error?.code === 'LIMIT_FILE_SIZE') {
+            res.status(413).json({ data: null, error: { message: 'File is too large. Max supported size is 300 MB.' } });
+            return;
+        }
+        res.status(400).json({ data: null, error: { message: error?.message || 'Upload middleware failed' } });
+    });
+}, uploadController);
 apiRouter.get('/storage/:bucket/list', listController);
 apiRouter.post('/storage/:bucket/public-url', publicUrlController);
 apiRouter.post('/storage/:bucket/signed-url', signedUrlController);
 apiRouter.post('/storage/:bucket/remove', removeController);
 // Public landing stats (guest-safe)
 apiRouter.get('/public/landing-stats', publicLandingStatsController);
+apiRouter.get('/public/booking-feedback', listPublicBookingFeedbackController);
+apiRouter.get('/public/app-feedback', listAppFeedbackController);
 // Auth
 apiRouter.get('/auth/me', requireAuth, meController);
 apiRouter.post('/auth/sync', syncAuthUserController);
@@ -100,6 +135,7 @@ apiRouter.post('/location-operating-hours/bulk-upsert', requireAuth, bulkUpsertL
 apiRouter.post('/public/book', publicBookTestDriveController);
 // Public feedback submission (no auth required)
 apiRouter.post('/public/feedback', submitTestDriveFeedbackController);
+apiRouter.post('/public/app-feedback', submitAppFeedbackController);
 // Email template preview (auth required — dealer_admin / superadmin)
 apiRouter.get('/email-templates/preview', requireAuth, previewEmailTemplateController);
 // Customer self-service booking (token-verified, no auth required)

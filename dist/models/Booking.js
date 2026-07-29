@@ -28,6 +28,9 @@ const BookingSchema = new Schema({
     amount_paid: { type: Number, default: null },
     pickup_photo_url: { type: String, default: null },
     return_photo_url: { type: String, default: null },
+    borrower_rating: { type: Number, min: 1, max: 5, default: null },
+    borrower_feedback: { type: String, default: null },
+    borrower_feedback_submitted_at: { type: String, default: null },
     created_at: { type: String, default: () => new Date().toISOString() },
     updated_at: { type: String, default: () => new Date().toISOString() },
 }, { collection: 'bookings', versionKey: false });

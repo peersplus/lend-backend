@@ -10,6 +10,17 @@ export async function listItemsController(req: Request, res: Response) {
   }
 }
 
+export async function listPublicBookingFeedbackController(req: Request, res: Response) {
+  try {
+    const rawLimit = Number(req.query.limit || 8);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 24) : 8;
+    const data = await listingService.listPublicBookingFeedback(limit);
+    res.json({ data, error: null });
+  } catch (error: any) {
+    res.status(500).json({ data: null, error: { message: error?.message || 'Failed to load booking feedback' } });
+  }
+}
+
 export async function createItemController(req: Request, res: Response) {
   try {
     if (!req.authUser?.uid) return res.status(401).json({ data: null, error: { message: 'Unauthorized' } });

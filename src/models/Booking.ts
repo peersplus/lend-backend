@@ -29,6 +29,9 @@ export interface IBooking extends Document {
   amount_paid: number | null;
   pickup_photo_url: string | null;
   return_photo_url: string | null;
+  borrower_rating: number | null;
+  borrower_feedback: string | null;
+  borrower_feedback_submitted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -63,6 +66,9 @@ const BookingSchema = new Schema<IBooking>(
     amount_paid: { type: Number, default: null },
     pickup_photo_url: { type: String, default: null },
     return_photo_url: { type: String, default: null },
+    borrower_rating: { type: Number, min: 1, max: 5, default: null },
+    borrower_feedback: { type: String, default: null },
+    borrower_feedback_submitted_at: { type: String, default: null },
     created_at: { type: String, default: () => new Date().toISOString() },
     updated_at: { type: String, default: () => new Date().toISOString() },
   },

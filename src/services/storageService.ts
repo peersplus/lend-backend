@@ -25,12 +25,28 @@ export async function saveFile(bucket: string, filePath: string, file: Express.M
     try {
       await fs.stat(target);
       throw new Error('File already exists');
-    } catch {
-      // If stat fails, file does not exist.
+    } catch (error) {
+      if (error instanceof Error && error.message === 'File already exists') {
+        throw error;
+      }
+      const fileError = error as NodeJS.ErrnoException;
+      if (fileError?.code !== 'ENOENT') {
+        throw error;
+      }
     }
   }
 
-  await fs.writeFile(target, file.buffer);
+  const maybeTempPath = (file as { path?: string }).path;
+  if (maybeTempPath) {
+    await fs.copyFile(maybeTempPath, target);
+    await fs.unlink(maybeTempPath).catch(() => {
+      // Best effort temporary file cleanup.
+    });
+  } else if (file.buffer) {
+    await fs.writeFile(target, file.buffer);
+  } else {
+    throw new Error('Upload payload is empty');
+  }
 
   return { path: safeFilePath, fullPath: target };
 }

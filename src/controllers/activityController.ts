@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import * as activityService from '../services/activityService.js';
 
 // ── Events ────────────────────────────────────────────────────────────────────
-
+/*kkhhjkhk*/
 export async function listEventsController(req: Request, res: Response) {
   const limit = Number(req.query.limit) || 200;
   const filters: Record<string, unknown> = { ...req.query };

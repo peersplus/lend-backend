@@ -1,6 +1,5 @@
 import * as activityService from '../services/activityService.js';
 // ── Events ────────────────────────────────────────────────────────────────────
-/*kkhhjkhk*/
 export async function listEventsController(req, res) {
     const limit = Number(req.query.limit) || 200;
     const filters = { ...req.query };

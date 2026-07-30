@@ -127,7 +127,7 @@ export function bookingConfirmationTemplate(data) {
     const branding = extractBranding(data);
     return {
         subject: `Test drive confirmed — ${scheduledDate || 'upcoming'}`,
-        html: base(`Your test drive is confirmed${scheduledDate ? ` for ${scheduledDate}` : ''}`, `<div class="body">
+        html: base(`<div class="body">
         <p>Hi ${customerName || 'there'},</p>
         <p>Great news — your test drive is confirmed ✅. We look forward to seeing you!</p>
         <div class="details">

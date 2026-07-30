@@ -21,29 +21,11 @@ export async function saveFile(bucket, filePath, file, upsert = false) {
             await fs.stat(target);
             throw new Error('File already exists');
         }
-        catch (error) {
-            if (error instanceof Error && error.message === 'File already exists') {
-                throw error;
-            }
-            const fileError = error;
-            if (fileError?.code !== 'ENOENT') {
-                throw error;
-            }
+        catch {
+            // If stat fails, file does not exist.
         }
     }
-    const maybeTempPath = file.path;
-    if (maybeTempPath) {
-        await fs.copyFile(maybeTempPath, target);
-        await fs.unlink(maybeTempPath).catch(() => {
-            // Best effort temporary file cleanup.
-        });
-    }
-    else if (file.buffer) {
-        await fs.writeFile(target, file.buffer);
-    }
-    else {
-        throw new Error('Upload payload is empty');
-    }
+    await fs.writeFile(target, file.buffer);
     return { path: safeFilePath, fullPath: target };
 }
 export async function listFiles(bucket, prefix = '', limit = 100) {

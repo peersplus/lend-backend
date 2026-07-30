@@ -16,9 +16,6 @@ function escapeRegExp(value: string) {
 /**
  * POST /api/public/app-feedback
  * Public endpoint for product feedback and ideas.
- * we will split feedback into two categories: "feedback" and "idea"
- * - feedback: general feedback about the product, features, or experience
- * - idea: suggestions for new features or improvements
  */
 export async function submitAppFeedbackController(req: Request, res: Response) {
   try {

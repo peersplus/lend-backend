@@ -8,17 +8,6 @@ export async function listItemsController(req, res) {
         res.status(500).json({ data: null, error: { message: error?.message || 'Failed to load items' } });
     }
 }
-export async function listPublicBookingFeedbackController(req, res) {
-    try {
-        const rawLimit = Number(req.query.limit || 8);
-        const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 24) : 8;
-        const data = await listingService.listPublicBookingFeedback(limit);
-        res.json({ data, error: null });
-    }
-    catch (error) {
-        res.status(500).json({ data: null, error: { message: error?.message || 'Failed to load booking feedback' } });
-    }
-}
 export async function createItemController(req, res) {
     try {
         if (!req.authUser?.uid)
@@ -32,23 +21,18 @@ export async function createItemController(req, res) {
 }
 export async function updateItemController(req, res) {
     try {
-        if (!req.authUser?.uid)
-            return res.status(401).json({ data: null, error: { message: 'Unauthorized' } });
-        const data = await listingService.updateItem(req.params.id, req.body, req.authUser.uid);
+        const data = await listingService.updateItem(req.params.id, req.body);
         if (!data)
             return res.status(404).json({ data: null, error: { message: 'Item not found' } });
         res.json({ data, error: null });
     }
     catch (error) {
-        const message = error?.message || 'Failed to update item';
-        res.status(message.startsWith('Forbidden:') ? 403 : 500).json({ data: null, error: { message } });
+        res.status(500).json({ data: null, error: { message: error?.message || 'Failed to update item' } });
     }
 }
 export async function deleteItemController(req, res) {
     try {
-        if (!req.authUser?.uid)
-            return res.status(401).json({ data: null, error: { message: 'Unauthorized' } });
-        const data = await listingService.deleteItem(req.params.id, req.authUser.uid);
+        const data = await listingService.deleteItem(req.params.id);
         if (!data)
             return res.status(404).json({ data: null, error: { message: 'Item not found' } });
         res.json({ data, error: null });

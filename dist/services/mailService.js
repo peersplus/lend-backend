@@ -1,7 +1,18 @@
 import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 function smtpReady() {
-    return Boolean(env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass && env.mailFrom);
+    return Boolean(env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass && (env.mailFrom || env.smtpUser));
+}
+function getFromAddress(dealerName) {
+    const fallbackAddress = env.mailFrom || env.smtpUser || 'no-reply@localhost';
+    const trimmedName = dealerName?.trim();
+    if (!trimmedName)
+        return fallbackAddress;
+    if (fallbackAddress.includes('<') && fallbackAddress.includes('>'))
+        return fallbackAddress;
+    if (fallbackAddress.includes('@'))
+        return `${trimmedName} <${fallbackAddress}>`;
+    return trimmedName;
 }
 let transporter = null;
 function getTransporter() {
@@ -28,7 +39,7 @@ export async function sendMail(input) {
     }
     try {
         const info = await tx.sendMail({
-            from: `${input._dealerName || 'Auto Dealer'}`,
+            from: getFromAddress(input._dealerName),
             to: input.to,
             subject: input.subject,
             html: input.html,

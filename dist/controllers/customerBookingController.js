@@ -5,7 +5,7 @@ import { Vehicle } from '../models/Vehicle.js';
 import { Location } from '../models/Location.js';
 import { Profile } from '../models/Profile.js';
 import { Notification } from '../models/Notification.js';
-import { saveFile } from '../services/storageService.js';
+import { publicUrl, saveFile } from '../services/storageService.js';
 import { sendMail } from '../services/mailService.js';
 import { env } from '../config/env.js';
 import { createPublicTestDrive, updateTestDrive } from '../services/testDriveService.js';
@@ -147,7 +147,7 @@ export async function uploadCustomerDocumentController(req, res) {
     }
     const fileName = `dl_${td.customer_id}_${Date.now()}.${ext}`;
     const saved = await saveFile('documents', fileName, req.file, true);
-    const fileUrl = `${env.publicApiUrl}/api/storage/documents/${encodeURIComponent(saved.path)}`;
+    const fileUrl = publicUrl('documents', saved.path);
     await Customer.findOneAndUpdate({ id: td.customer_id }, { $set: { driving_license_url: fileUrl, updated_at: new Date().toISOString() } });
     // Non-blocking: notify customer + sales person
     void notifyLicenseUploaded(td.id, td.customer_id, fileUrl).catch((err) => {

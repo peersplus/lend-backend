@@ -9,6 +9,8 @@ const ItemSchema = new Schema({
     price_amount: { type: Number, default: null },
     deposit_amount: { type: Number, default: null },
     image_url: { type: String, default: null },
+    image_urls: { type: [String], default: [] },
+    video_url: { type: String, default: null },
     status: { type: String, enum: ['available', 'unavailable'], default: 'available', index: true },
     building_name: { type: String, default: null },
     address: { type: String, default: null },

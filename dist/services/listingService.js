@@ -6,6 +6,7 @@ import { RequestOffer } from '../models/RequestOffer.js';
 import { Message } from '../models/Message.js';
 import { Profile } from '../models/Profile.js';
 import { persistNotification, sendPushToUser } from './firebaseService.js';
+import { sendMail } from './mailService.js';
 function lean(doc) {
     if (!doc)
         return null;
@@ -16,6 +17,27 @@ function lean(doc) {
 function toNumber(value) {
     const n = typeof value === 'number' ? value : Number(value);
     return Number.isFinite(n) ? n : null;
+}
+function normalizeImageUrls(input, fallback) {
+    const values = Array.isArray(input)
+        ? input
+        : Array.isArray(fallback)
+            ? fallback
+            : [];
+    return Array.from(new Set(values
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean)));
+}
+function normalizeItemPayload(data) {
+    const imageUrls = normalizeImageUrls(data.image_urls, data.image_url ? [data.image_url] : []);
+    const imageUrl = imageUrls[0] || null;
+    const videoUrl = String(data.video_url || '').trim() || null;
+    return {
+        ...data,
+        image_urls: imageUrls,
+        image_url: imageUrl,
+        video_url: videoUrl,
+    };
 }
 function getDistanceKm(lat1, lng1, lat2, lng2) {
     const toRad = (value) => (value * Math.PI) / 180;
@@ -185,6 +207,374 @@ export function buildBookingNotificationPlan(previousStatus, nextStatus, itemTit
             return [];
     }
 }
+export function validateBookingRequestOwner(ownerId, borrowerId) {
+    const normalizedOwnerId = String(ownerId || '').trim();
+    const normalizedBorrowerId = String(borrowerId || '').trim();
+    if (!normalizedOwnerId || !normalizedBorrowerId) {
+        return { ok: true };
+    }
+    if (normalizedBorrowerId === normalizedOwnerId) {
+        return { ok: false, message: 'You cannot request to borrow an item you created as the creator.' };
+    }
+    return { ok: true };
+}
+export function buildBookingRequestResendAction(status) {
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    if (normalizedStatus === 'requested') {
+        return { shouldCancel: true, action: 'resend' };
+    }
+    return { shouldCancel: false, action: 'create' };
+}
+export function buildBookingReminderPlan(booking, ownerId, borrowerId) {
+    const urgency = String(booking?.urgency || 'normal').trim().toLowerCase() === 'urgent' ? 'urgent' : 'normal';
+    const isHighAlert = urgency === 'urgent';
+    const reminderCount = Number(booking?.reminder_count || 0) + 1;
+    const title = isHighAlert ? 'High alert: urgent booking request' : 'Reminder: booking request still waiting';
+    const body = isHighAlert
+        ? 'Please respond within 30 minutes to this urgent request so the borrower gets a timely answer.'
+        : 'Please respond soon — this request has been waiting for your response for more than a day.';
+    const type = isHighAlert ? 'booking_request_high_alert' : 'booking_request_reminder';
+    return {
+        isHighAlert,
+        title,
+        body,
+        type,
+        userId: ownerId,
+        reminderCount,
+        urgency,
+        metadata: { urgency, reminder_count: reminderCount, response_window: isHighAlert ? '30m' : '24h' },
+    };
+}
+async function sendBookingRequestEmail(booking) {
+    const itemDoc = await Item.findOne({ id: booking?.item_id }).lean();
+    const ownerId = String(booking?.owner_id || itemDoc?.owner_id || '');
+    const borrowerId = String(booking?.borrower_id || '');
+    const itemTitle = itemDoc?.title || 'your item';
+    if (!ownerId || !borrowerId || String(booking?.status || 'requested') !== 'requested') {
+        return;
+    }
+    const [ownerProfile, borrowerProfile] = await Promise.all([
+        Profile.findOne({ user_id: ownerId }).lean(),
+        Profile.findOne({ user_id: borrowerId }).lean(),
+    ]);
+    if (!ownerProfile?.email && !borrowerProfile?.email)
+        return;
+    const ownerName = ownerProfile?.full_name || ownerProfile?.email || 'there';
+    const borrowerName = borrowerProfile?.full_name || borrowerProfile?.email || 'Someone';
+    const reviewUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/bookings`;
+    const subject = `New booking request for ${itemTitle}`;
+    const html = `
+    <p>Hi ${ownerName},</p>
+    <p>${borrowerName} requested to borrow <strong>${itemTitle}</strong>.</p>
+    <p>Please <a href="${reviewUrl}">sign in and open your bookings</a> to review and respond to the request.</p>
+    <p>You can approve, decline, or chat directly from there.</p>
+  `;
+    const outbound = [];
+    if (ownerProfile?.email) {
+        outbound.push({
+            to: ownerProfile.email,
+            subject,
+            html,
+            text: `${borrowerName} requested to borrow ${itemTitle}. Sign in to your bookings to review it: ${reviewUrl}`,
+        });
+    }
+    if (borrowerProfile?.email) {
+        outbound.push({
+            to: borrowerProfile.email,
+            subject: `Request sent for ${itemTitle}`,
+            html: `
+        <p>Hi ${borrowerProfile.full_name || 'there'},</p>
+        <p>Your request to borrow <strong>${itemTitle}</strong> was sent to the owner.</p>
+        <p>You can follow updates in <a href="${reviewUrl}">your bookings</a>.</p>
+      `,
+            text: `Your request for ${itemTitle} was sent. Track updates at ${reviewUrl}`,
+        });
+    }
+    await Promise.allSettled(outbound.map((mail) => sendMail(mail)));
+}
+async function sendBookingReminderEmail(booking, reminderPlan) {
+    const itemDoc = await Item.findOne({ id: booking?.item_id }).lean();
+    const ownerId = String(booking?.owner_id || '');
+    const borrowerId = String(booking?.borrower_id || '');
+    const itemTitle = itemDoc?.title || 'your item';
+    if (!ownerId || !borrowerId)
+        return;
+    const [ownerProfile, borrowerProfile] = await Promise.all([
+        Profile.findOne({ user_id: ownerId }).lean(),
+        Profile.findOne({ user_id: borrowerId }).lean(),
+    ]);
+    if (!ownerProfile?.email)
+        return;
+    const borrowerName = borrowerProfile?.full_name || borrowerProfile?.email || 'Someone';
+    const reviewUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/bookings`;
+    const subject = reminderPlan.isHighAlert
+        ? `High alert: ${borrowerName} needs a response for ${itemTitle} within 30 minutes`
+        : `Reminder: ${borrowerName} is waiting for your response about ${itemTitle}`;
+    const html = `
+    <p>Hi ${ownerProfile.full_name || 'there'},</p>
+    <p>${borrowerName} is waiting for your response about <strong>${itemTitle}</strong>.</p>
+    <p>${reminderPlan.isHighAlert ? 'This is a high-alert reminder — please respond within 30 minutes.' : 'A reminder was sent because this request has been waiting for a response.'}</p>
+    <p><a href="${reviewUrl}">Open your bookings</a> to approve, decline, or chat.</p>
+  `;
+    await sendMail({
+        to: ownerProfile.email,
+        subject,
+        html,
+        text: `${borrowerName} is waiting for your response about ${itemTitle}. ${reminderPlan.isHighAlert ? 'Please respond within 30 minutes.' : 'Please respond soon.'}`,
+    });
+}
+export function buildBookingStatusEmailDrafts(params) {
+    const status = String(params.status || '').trim().toLowerCase();
+    const oldStatus = String(params.previousStatus || '').trim().toLowerCase();
+    if (!status || status === oldStatus || status === 'requested')
+        return [];
+    const ownerEmail = String(params.owner?.email || '').trim();
+    const borrowerEmail = String(params.borrower?.email || '').trim();
+    const ownerName = params.owner?.full_name || ownerEmail || 'there';
+    const borrowerName = params.borrower?.full_name || borrowerEmail || 'there';
+    const itemTitle = params.itemTitle || 'your item';
+    const bookingId = String(params.bookingId || '');
+    const pickupAt = params.pickupAt ? new Date(params.pickupAt).toLocaleString() : null;
+    const returnedAt = params.returnedAt ? new Date(params.returnedAt).toLocaleString() : null;
+    const defectNotes = String(params.defectNotes || '').trim();
+    const amountPaid = Number(params.amountPaid || 0);
+    const appUrl = params.appUrl;
+    const outbound = [];
+    if (status === 'approved') {
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Booking approved for ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>Your booking request for <strong>${itemTitle}</strong> was approved.</p><p>You can coordinate pickup in chat and bookings: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${borrowerName}, your booking for ${itemTitle} was approved. Open ${appUrl}`,
+            });
+        }
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `You approved a booking for ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p>You approved booking <strong>${bookingId}</strong> for <strong>${itemTitle}</strong>.</p><p>Track it in bookings: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${ownerName}, you approved booking ${bookingId} for ${itemTitle}. Open ${appUrl}`,
+            });
+        }
+    }
+    if (status === 'declined') {
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Booking declined for ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>Your booking request for <strong>${itemTitle}</strong> was declined.</p><p>You can browse other nearby items: <a href="${appUrl.replace('/bookings', '/items')}">Items</a></p>`,
+                text: `Hi ${borrowerName}, your booking request for ${itemTitle} was declined.`,
+            });
+        }
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `You declined a booking for ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p>You declined booking <strong>${bookingId}</strong> for <strong>${itemTitle}</strong>.</p><p>See details: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${ownerName}, you declined booking ${bookingId} for ${itemTitle}.`,
+            });
+        }
+    }
+    if (status === 'cancelled') {
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `Booking cancelled for ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p>The booking for <strong>${itemTitle}</strong> was cancelled.</p><p>See details: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${ownerName}, booking for ${itemTitle} was cancelled.`,
+            });
+        }
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Booking cancelled for ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>The booking for <strong>${itemTitle}</strong> was cancelled.</p><p>See details: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${borrowerName}, booking for ${itemTitle} was cancelled.`,
+            });
+        }
+    }
+    if (status === 'picked_up') {
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `Item dispatched/picked up: ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p><strong>${itemTitle}</strong> was marked as picked up${pickupAt ? ` at ${pickupAt}` : ''}.</p><p>Track this booking: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${ownerName}, ${itemTitle} was picked up${pickupAt ? ` at ${pickupAt}` : ''}.`,
+            });
+        }
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Pickup confirmed: ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>Pickup for <strong>${itemTitle}</strong> is confirmed${pickupAt ? ` at ${pickupAt}` : ''}.</p><p>Track this booking: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${borrowerName}, pickup for ${itemTitle} is confirmed${pickupAt ? ` at ${pickupAt}` : ''}.`,
+            });
+        }
+    }
+    if (status === 'returned') {
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `Return confirmed: ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p><strong>${itemTitle}</strong> was marked returned${returnedAt ? ` at ${returnedAt}` : ''}.</p><p>${amountPaid > 0 ? `Amount recorded: <strong>$${amountPaid}</strong>.` : ''}</p><p>See booking: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${ownerName}, ${itemTitle} was returned${returnedAt ? ` at ${returnedAt}` : ''}.${amountPaid > 0 ? ` Amount: $${amountPaid}.` : ''}`,
+            });
+        }
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Return recorded: ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>Your return for <strong>${itemTitle}</strong> was recorded${returnedAt ? ` at ${returnedAt}` : ''}.</p><p>${amountPaid > 0 ? `Amount recorded: <strong>$${amountPaid}</strong>.` : ''}</p><p>See booking: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${borrowerName}, return for ${itemTitle} recorded${returnedAt ? ` at ${returnedAt}` : ''}.${amountPaid > 0 ? ` Amount: $${amountPaid}.` : ''}`,
+            });
+        }
+    }
+    if (status === 'defect_reported') {
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `Defect reported on return: ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p>A defect was reported for returned item <strong>${itemTitle}</strong>.</p><p>${defectNotes ? `Notes: ${defectNotes}` : ''}</p><p>${amountPaid > 0 ? `Recorded amount: <strong>$${amountPaid}</strong>.` : ''}</p><p>Review booking: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${ownerName}, defect reported on ${itemTitle}.${defectNotes ? ` Notes: ${defectNotes}.` : ''}`,
+            });
+        }
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Defect report submitted: ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>Your return was marked with a defect for <strong>${itemTitle}</strong>.</p><p>${defectNotes ? `Notes: ${defectNotes}` : ''}</p><p>${amountPaid > 0 ? `Recorded amount: <strong>$${amountPaid}</strong>.` : ''}</p><p>See booking: <a href="${appUrl}">${appUrl}</a></p>`,
+                text: `Hi ${borrowerName}, defect reported for ${itemTitle}.${defectNotes ? ` Notes: ${defectNotes}.` : ''}`,
+            });
+        }
+    }
+    if (status === 'completed') {
+        if (ownerEmail) {
+            outbound.push({
+                to: ownerEmail,
+                subject: `Booking completed: ${itemTitle}`,
+                html: `<p>Hi ${ownerName},</p><p>Booking for <strong>${itemTitle}</strong> is now completed.</p><p>Thanks for sharing in your community.</p>`,
+                text: `Hi ${ownerName}, booking for ${itemTitle} is completed.`,
+            });
+        }
+        if (borrowerEmail) {
+            outbound.push({
+                to: borrowerEmail,
+                subject: `Booking completed: ${itemTitle}`,
+                html: `<p>Hi ${borrowerName},</p><p>Your booking for <strong>${itemTitle}</strong> is now completed.</p><p>Thanks for being a responsible neighbor.</p>`,
+                text: `Hi ${borrowerName}, booking for ${itemTitle} is completed.`,
+            });
+        }
+    }
+    return outbound;
+}
+async function sendBookingStatusEmails(booking, previousStatus) {
+    const itemDoc = await Item.findOne({ id: booking?.item_id }).lean();
+    const ownerId = String(booking?.owner_id || itemDoc?.owner_id || '');
+    const borrowerId = String(booking?.borrower_id || '');
+    const itemTitle = itemDoc?.title || 'your item';
+    if (!ownerId || !borrowerId)
+        return;
+    const [ownerProfile, borrowerProfile] = await Promise.all([
+        Profile.findOne({ user_id: ownerId }).lean(),
+        Profile.findOne({ user_id: borrowerId }).lean(),
+    ]);
+    const appUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/bookings`;
+    const outbound = buildBookingStatusEmailDrafts({
+        status: String(booking?.status || ''),
+        previousStatus,
+        bookingId: String(booking?.id || ''),
+        itemTitle,
+        owner: { email: ownerProfile?.email || null, full_name: ownerProfile?.full_name || null },
+        borrower: { email: borrowerProfile?.email || null, full_name: borrowerProfile?.full_name || null },
+        appUrl,
+        pickupAt: booking?.pickup_at || null,
+        returnedAt: booking?.returned_at || null,
+        defectNotes: booking?.defect_notes || null,
+        amountPaid: Number(booking?.amount_paid || 0),
+    });
+    await Promise.allSettled(outbound.map((mail) => sendMail(mail)));
+}
+async function sendRequestCreatedEmail(request) {
+    const ownerId = String(request?.owner_id || '');
+    if (!ownerId)
+        return;
+    const ownerProfile = await Profile.findOne({ user_id: ownerId }).lean();
+    if (!ownerProfile?.email)
+        return;
+    const requestTitle = request?.title || 'your request';
+    const appUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/requests`;
+    await sendMail({
+        to: ownerProfile.email,
+        subject: `Request created: ${requestTitle}`,
+        html: `<p>Hi ${ownerProfile.full_name || 'there'},</p><p>Your request <strong>${requestTitle}</strong> is now live.</p><p>Track responses here: <a href="${appUrl}">${appUrl}</a></p>`,
+        text: `Your request ${requestTitle} is now live. Track responses at ${appUrl}`,
+    });
+}
+async function sendRequestStatusFollowUpEmails(request, previousStatus) {
+    const currentStatus = String(request?.status || 'open').trim().toLowerCase();
+    const oldStatus = String(previousStatus || '').trim().toLowerCase();
+    if (currentStatus === oldStatus)
+        return;
+    const offerDocs = await RequestOffer.find({ request_id: request?.id }).lean();
+    const helperIds = Array.from(new Set(offerDocs.map((doc) => String(doc?.helper_id || '')).filter(Boolean)));
+    const recipients = Array.from(new Set([String(request?.owner_id || ''), ...helperIds].filter(Boolean)));
+    if (!recipients.length)
+        return;
+    const profiles = await Profile.find({ user_id: { $in: recipients } }).lean();
+    const profileByUserId = new Map(profiles.map((p) => [String(p.user_id || ''), p]));
+    const ownerId = String(request?.owner_id || '');
+    const requestTitle = request?.title || 'your request';
+    const appUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/requests`;
+    const statusLabel = currentStatus === 'closed' ? 'closed' : currentStatus === 'open' ? 'reopened' : currentStatus;
+    const outbound = [];
+    for (const userId of recipients) {
+        const profile = profileByUserId.get(userId);
+        const email = String(profile?.email || '').trim();
+        if (!email)
+            continue;
+        const isOwner = userId === ownerId;
+        const person = profile?.full_name || email || 'there';
+        outbound.push({
+            to: email,
+            subject: `Request ${statusLabel}: ${requestTitle}`,
+            html: `<p>Hi ${person},</p><p>${isOwner ? 'Your request' : 'A request you follow'} <strong>${requestTitle}</strong> is now <strong>${statusLabel}</strong>.</p><p>Open requests: <a href="${appUrl}">${appUrl}</a></p>`,
+            text: `${isOwner ? 'Your request' : 'A followed request'} ${requestTitle} is now ${statusLabel}. Open ${appUrl}`,
+        });
+    }
+    await Promise.allSettled(outbound.map((mail) => sendMail(mail)));
+}
+async function sendRequestOfferFollowUpEmail(offer, requestDoc) {
+    const ownerId = String(requestDoc?.owner_id || '');
+    const helperId = String(offer?.helper_id || '');
+    if (!ownerId || !helperId)
+        return;
+    const [ownerProfile, helperProfile] = await Promise.all([
+        Profile.findOne({ user_id: ownerId }).lean(),
+        Profile.findOne({ user_id: helperId }).lean(),
+    ]);
+    const requestTitle = requestDoc?.title || 'your request';
+    const helperName = helperProfile?.full_name || helperProfile?.email || 'A neighbor';
+    const appUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/requests`;
+    const outbound = [];
+    if (ownerProfile?.email) {
+        outbound.push({
+            to: ownerProfile.email,
+            subject: `New offer on request: ${requestTitle}`,
+            html: `<p>Hi ${ownerProfile.full_name || 'there'},</p><p>${helperName} offered to help with <strong>${requestTitle}</strong>.</p><p>Review in requests: <a href="${appUrl}">${appUrl}</a></p>`,
+            text: `${helperName} offered to help with ${requestTitle}. Review in ${appUrl}`,
+        });
+    }
+    if (helperProfile?.email) {
+        outbound.push({
+            to: helperProfile.email,
+            subject: `Offer sent for request: ${requestTitle}`,
+            html: `<p>Hi ${helperProfile.full_name || 'there'},</p><p>Your offer for <strong>${requestTitle}</strong> was sent successfully.</p><p>Track updates in requests: <a href="${appUrl}">${appUrl}</a></p>`,
+            text: `Your offer for ${requestTitle} was sent. Track updates in ${appUrl}`,
+        });
+    }
+    await Promise.allSettled(outbound.map((mail) => sendMail(mail)));
+}
 async function sendBookingNotifications(booking, previousStatus) {
     const itemDoc = await Item.findOne({ id: booking?.item_id }).lean();
     const ownerId = String(booking?.owner_id || '');
@@ -192,6 +582,10 @@ async function sendBookingNotifications(booking, previousStatus) {
     const plan = buildBookingNotificationPlan(previousStatus, String(booking?.status || 'requested'), itemDoc?.title || 'your item', ownerId, borrowerId);
     if (!plan.length)
         return;
+    if (String(booking?.status || 'requested') === 'requested') {
+        await sendBookingRequestEmail(booking);
+    }
+    await sendBookingStatusEmails(booking, previousStatus);
     await emitNotifications(plan.map((entry) => entry.userId).filter(Boolean), {
         title: plan[0].title,
         body: plan[0].body,
@@ -204,33 +598,45 @@ async function sendBookingNotifications(booking, previousStatus) {
 export async function listItems() {
     const docs = await Item.find({ status: 'available' }).sort({ created_at: -1 }).limit(60).lean();
     return docs.map((doc) => {
+        doc.image_urls = normalizeImageUrls(doc.image_urls, doc.image_url ? [doc.image_url] : []);
+        doc.image_url = doc.image_urls[0] || null;
         delete doc._id;
         return doc;
     });
 }
 export async function createItem(userId, data) {
     const now = new Date().toISOString();
+    const normalized = normalizeItemPayload(data);
     const doc = await Item.create({
         id: randomUUID(),
         owner_id: userId,
         status: 'available',
         created_at: now,
         updated_at: now,
-        ...data,
+        ...normalized,
     });
     const item = lean(doc);
     await notifyNearbyUsersForItem(item, userId);
     return item;
 }
-export async function updateItem(id, data) {
-    const doc = await Item.findOneAndUpdate({ id }, { $set: { ...data, updated_at: new Date().toISOString() } }, { new: true });
+export async function updateItem(id, data, actorUserId) {
+    const existing = await Item.findOne({ id }).lean();
+    if (!existing)
+        return null;
+    if (actorUserId && String(existing.owner_id || '') !== actorUserId) {
+        throw new Error('Forbidden: only the owner can edit this item');
+    }
+    const normalized = normalizeItemPayload(data);
+    const doc = await Item.findOneAndUpdate({ id }, { $set: { ...normalized, updated_at: new Date().toISOString() } }, { new: true });
     const item = lean(doc);
     if (item)
         await notifyNearbyUsersForItem(item);
     return item;
 }
-export async function deleteItem(id) {
-    const doc = await Item.findOneAndDelete({ id });
+export async function deleteItem(id, actorUserId) {
+    if (!actorUserId)
+        return null;
+    const doc = await Item.findOneAndDelete({ id, owner_id: actorUserId });
     return lean(doc);
 }
 export async function listBookings(userId, role) {
@@ -243,7 +649,46 @@ export async function listBookings(userId, role) {
 }
 export async function createBooking(data) {
     const now = new Date().toISOString();
-    const doc = await Booking.create({ id: randomUUID(), created_at: now, updated_at: now, ...data });
+    const ownerId = String(data.owner_id || '');
+    const borrowerId = String(data.borrower_id || '');
+    const itemId = String(data.item_id || '');
+    if (itemId) {
+        const itemDoc = await Item.findOne({ id: itemId }).lean();
+        const actualOwnerId = String(itemDoc?.owner_id || ownerId || '');
+        const validation = validateBookingRequestOwner(actualOwnerId, borrowerId);
+        if (!validation.ok) {
+            throw new Error(validation.message || 'You cannot request to borrow an item you created.');
+        }
+    }
+    else {
+        const validation = validateBookingRequestOwner(ownerId, borrowerId);
+        if (!validation.ok) {
+            throw new Error(validation.message || 'You cannot request to borrow an item you created.');
+        }
+    }
+    const existingPending = await Booking.findOne({
+        item_id: itemId,
+        borrower_id: borrowerId,
+        status: 'requested',
+    }).lean();
+    if (existingPending) {
+        const existing = await Booking.findOneAndUpdate({ id: existingPending.id }, { $set: { updated_at: now, ...data, status: 'requested' } }, { new: true });
+        const booking = lean(existing);
+        if (booking)
+            await sendBookingNotifications(booking, existingPending.status || null);
+        return booking;
+    }
+    const doc = await Booking.create({
+        id: randomUUID(),
+        created_at: now,
+        updated_at: now,
+        urgency: String(data.urgency || 'normal').trim().toLowerCase() === 'urgent' ? 'urgent' : 'normal',
+        reminder_count: 0,
+        last_reminder_at: null,
+        last_high_alert_at: null,
+        response_deadline_at: null,
+        ...data,
+    });
     const booking = lean(doc);
     if (booking)
         await sendBookingNotifications(booking, null);
@@ -251,11 +696,104 @@ export async function createBooking(data) {
 }
 export async function updateBooking(id, data) {
     const previous = await Booking.findOne({ id }).lean();
-    const doc = await Booking.findOneAndUpdate({ id }, { $set: { ...data, updated_at: new Date().toISOString() } }, { new: true });
+    const now = new Date().toISOString();
+    const action = String(data.action || '').trim().toLowerCase();
+    if (action === 'remind' && previous?.status === 'requested') {
+        const urgency = String(data.urgency || previous?.urgency || 'normal').trim().toLowerCase() === 'urgent' ? 'urgent' : 'normal';
+        const reminderCount = Number(previous?.reminder_count || 0) + 1;
+        const responseDeadlineAt = urgency === 'urgent'
+            ? new Date(Date.now() + 30 * 60 * 1000).toISOString()
+            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const doc = await Booking.findOneAndUpdate({ id }, {
+            $set: {
+                urgency,
+                reminder_count: reminderCount,
+                last_reminder_at: now,
+                response_deadline_at: responseDeadlineAt,
+                ...(urgency === 'urgent' ? { last_high_alert_at: now } : {}),
+                updated_at: now,
+            },
+        }, { new: true });
+        const booking = lean(doc);
+        if (booking) {
+            const reminderPlan = buildBookingReminderPlan(booking, String(booking.owner_id || ''), String(booking.borrower_id || ''));
+            await sendBookingReminderEmail(booking, reminderPlan);
+            await emitNotifications([String(booking.owner_id || '')].filter(Boolean), {
+                title: reminderPlan.title,
+                body: reminderPlan.body,
+                type: reminderPlan.type,
+                referenceId: booking.id,
+                referenceType: 'booking',
+                metadata: { item_title: booking.item_id || null, urgency: reminderPlan.urgency, reminder_count: reminderPlan.reminderCount },
+            });
+        }
+        return booking;
+    }
+    const doc = await Booking.findOneAndUpdate({ id }, { $set: { ...data, updated_at: now } }, { new: true });
     const booking = lean(doc);
     if (booking)
         await sendBookingNotifications(booking, previous?.status || null);
     return booking;
+}
+function maskName(name) {
+    const value = String(name || '').trim();
+    if (!value)
+        return 'Verified neighbor';
+    const parts = value.split(/\s+/).filter(Boolean);
+    if (!parts.length)
+        return 'Verified neighbor';
+    return parts.map((part) => `${part.charAt(0).toUpperCase()}${part.length > 1 ? '.' : ''}`).join(' ');
+}
+export async function listPublicBookingFeedback(limit = 8) {
+    const max = Number.isFinite(limit) ? Math.min(Math.max(Number(limit), 1), 24) : 8;
+    const docs = await Booking.find({
+        borrower_rating: { $gte: 1, $lte: 5 },
+        borrower_feedback: { $ne: null },
+        status: { $in: ['returned', 'completed', 'defect_reported'] },
+    })
+        .sort({ borrower_feedback_submitted_at: -1, returned_at: -1, created_at: -1 })
+        .limit(max * 3)
+        .lean();
+    const rows = docs
+        .map((doc) => {
+        const feedback = String(doc?.borrower_feedback || '').trim();
+        const rating = Number(doc?.borrower_rating || 0);
+        if (!feedback || rating < 1 || rating > 5)
+            return null;
+        return {
+            booking_id: String(doc?.id || ''),
+            item_id: String(doc?.item_id || ''),
+            borrower_id: String(doc?.borrower_id || ''),
+            rating,
+            feedback,
+            created_at: String(doc?.borrower_feedback_submitted_at || doc?.returned_at || doc?.updated_at || ''),
+        };
+    })
+        .filter(Boolean);
+    const itemIds = Array.from(new Set(rows.map((row) => row.item_id).filter(Boolean)));
+    const borrowerIds = Array.from(new Set(rows.map((row) => row.borrower_id).filter(Boolean)));
+    const [items, borrowers] = await Promise.all([
+        itemIds.length ? Item.find({ id: { $in: itemIds } }).lean() : Promise.resolve([]),
+        borrowerIds.length ? Profile.find({ user_id: { $in: borrowerIds } }).lean() : Promise.resolve([]),
+    ]);
+    const itemMap = new Map(items.map((item) => [String(item.id || ''), String(item.title || 'Shared item')]));
+    const borrowerMap = new Map(borrowers.map((profile) => [String(profile.user_id || ''), String(profile.full_name || '')]));
+    const sorted = rows
+        .sort((a, b) => {
+        if (b.rating !== a.rating)
+            return b.rating - a.rating;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    })
+        .slice(0, max)
+        .map((row) => ({
+        booking_id: row.booking_id,
+        rating: row.rating,
+        feedback: row.feedback,
+        item_title: itemMap.get(row.item_id) || 'Shared item',
+        borrower_name: maskName(borrowerMap.get(row.borrower_id) || ''),
+        created_at: row.created_at,
+    }));
+    return sorted;
 }
 export async function listRequests(userId, isSuperadmin = false) {
     const query = {};
@@ -276,6 +814,7 @@ export async function createRequest(userId, data) {
     const doc = await Request.create({ id: randomUUID(), owner_id: userId, status: 'open', created_at: now, updated_at: now, ...data });
     const request = lean(doc);
     if (request) {
+        await sendRequestCreatedEmail(request);
         const lat = toNumber(request.lat);
         const lng = toNumber(request.lng);
         if (lat != null && lng != null) {
@@ -309,6 +848,7 @@ export async function updateRequest(id, data) {
     const doc = await Request.findOneAndUpdate({ id }, { $set: { ...data, updated_at: new Date().toISOString() } }, { new: true });
     const request = lean(doc);
     if (request && previous?.status !== request?.status) {
+        await sendRequestStatusFollowUpEmails(request, previous?.status || null);
         await notifyRequestFollowers(request);
     }
     return request;
@@ -324,6 +864,7 @@ export async function createRequestOffer(data) {
     if (offer) {
         const requestDoc = await Request.findOne({ id: offer.request_id }).lean();
         if (requestDoc?.owner_id) {
+            await sendRequestOfferFollowUpEmail(offer, requestDoc);
             await emitNotifications([requestDoc.owner_id], {
                 title: 'New help offer',
                 body: `Someone offered to help with ${requestDoc.title || 'your request'}.`,
@@ -357,10 +898,7 @@ export async function createMessage(data) {
 }
 export async function getProfileForUser(userId) {
     const doc = await Profile.findOne({ user_id: userId }).lean();
-    if (!doc)
-        return null;
-    delete doc._id;
-    return doc;
+    return lean(doc);
 }
 export async function updateProfileForUser(userId, data) {
     const now = new Date().toISOString();

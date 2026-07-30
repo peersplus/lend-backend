@@ -27,6 +27,10 @@ export const env = {
     smtpUser: process.env.SMTP_USER || '',
     smtpPass: process.env.SMTP_PASS || '',
     mailFrom: process.env.MAIL_FROM || '',
+    cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+    cloudinaryApiKey: process.env.CLOUDINARY_API_KEY || '',
+    cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET || '',
+    cloudinaryUserName: process.env.CLOUDINARY_USER_NAME || '',
     // OAuth — Google Calendar
     googleOAuthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID || '',
     googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',

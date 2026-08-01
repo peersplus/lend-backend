@@ -7,6 +7,25 @@ import { Message } from '../models/Message.js';
 import { Profile } from '../models/Profile.js';
 import { persistNotification, sendPushToUser } from './firebaseService.js';
 import { sendMail } from './mailService.js';
+import { env } from '../config/env.js';
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'because', 'by', 'for', 'from', 'get', 'have', 'help', 'i', 'in', 'is', 'it',
+  'me', 'my', 'need', 'needed', 'needs', 'of', 'on', 'or', 'our', 'please', 'the', 'to', 'urgent', 'urgently', 'us', 'we', 'with', 'you', 'your',
+]);
+
+const URGENT_MATCH_PATTERNS: Record<string, string[]> = {
+  charger: ['charger', 'charging', 'cable', 'usb', 'type c', 'type-c', 'lightning', 'adapter', 'power bank', 'powerbank'],
+  laptop: ['laptop', 'notebook', 'macbook'],
+  phone: ['phone', 'mobile', 'smartphone', 'iphone', 'android'],
+  medicine: ['medicine', 'med', 'tablet', 'capsule', 'first aid', 'first-aid', 'bandage'],
+  wheelchair: ['wheelchair', 'wheel chair'],
+  stroller: ['stroller', 'pram', 'baby carriage'],
+  pump: ['air pump', 'pump', 'inflator'],
+  tool: ['tool', 'drill', 'screwdriver', 'hammer', 'wrench', 'spanner', 'pliers', 'cutter', 'saw'],
+  inverter: ['inverter', 'ups', 'backup battery', 'battery backup'],
+  torch: ['torch', 'flashlight', 'emergency light'],
+};
 
 function lean(doc: any) {
   if (!doc) return null;
@@ -55,6 +74,183 @@ function getDistanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const dLng = toRad(lng2 - lng1);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return earthRadiusKm * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function tokenizeNaturalText(input: string) {
+  const normalized = String(input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return [] as string[];
+  return normalized
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !STOP_WORDS.has(token));
+}
+
+function expandIntentTerms(tokens: string[], text: string) {
+  const expanded = new Set(tokens);
+  const normalizedText = String(text || '').toLowerCase();
+
+  for (const [label, phrases] of Object.entries(URGENT_MATCH_PATTERNS)) {
+    const hasMatch = phrases.some((phrase) => normalizedText.includes(phrase));
+    if (hasMatch) expanded.add(label);
+  }
+
+  return Array.from(expanded);
+}
+
+function scoreItemRelevance(item: any, requestTerms: string[], requestText: string, requestCategory: string) {
+  const haystack = [item?.title, item?.description, item?.category]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  if (!haystack.trim()) return { score: 0, matchedTerms: [] as string[] };
+
+  const matchedTerms = requestTerms.filter((term) => haystack.includes(term));
+  let score = matchedTerms.length;
+
+  for (const [label, phrases] of Object.entries(URGENT_MATCH_PATTERNS)) {
+    const reqHasLabel = requestTerms.includes(label) || phrases.some((phrase) => requestText.includes(phrase));
+    if (!reqHasLabel) continue;
+    const itemHasLabel = haystack.includes(label) || phrases.some((phrase) => haystack.includes(phrase));
+    if (itemHasLabel) score += 3;
+  }
+
+  const itemCategory = String(item?.category || '').trim().toLowerCase();
+  if (requestCategory && itemCategory && requestCategory === itemCategory) {
+    score += 2;
+  }
+
+  return { score, matchedTerms };
+}
+
+async function notifyUrgentRequestMatches(request: any, actorUserId: string, options?: { stage?: 'initial' | 'realert' }) {
+  const lat = toNumber(request?.lat);
+  const lng = toNumber(request?.lng);
+  if (lat == null || lng == null) return;
+
+  const requestText = [request?.title, request?.description].map((value) => String(value || '')).join(' ').toLowerCase();
+  const requestCategory = String(request?.category || '').trim().toLowerCase();
+  const baseTokens = tokenizeNaturalText(requestText);
+  const requestTerms = expandIntentTerms(baseTokens, requestText);
+  if (!requestTerms.length) return;
+
+  const radiusKm = Math.max(1, Math.min(30, toNumber(request?.radius_km) ?? 5));
+  const items = await Item.find({ status: 'available', owner_id: { $ne: actorUserId } })
+    .limit(Math.max(50, env.urgentMatchMaxItems))
+    .lean();
+  if (!items.length) return;
+
+  const ownerIds = Array.from(new Set(items.map((item: any) => String(item?.owner_id || '')).filter(Boolean)));
+  const ownerProfiles = ownerIds.length
+    ? await Profile.find({ user_id: { $in: ownerIds } }, { user_id: 1, lat: 1, lng: 1 }).lean()
+    : [];
+  const ownerById = new Map(ownerProfiles.map((profile: any) => [String(profile.user_id || ''), profile]));
+
+  const bestByOwner = new Map<string, { itemId: string; itemTitle: string; score: number; matchedTerms: string[]; distanceKm: number }>();
+
+  for (const item of items as any[]) {
+    const ownerId = String(item?.owner_id || '');
+    if (!ownerId || ownerId === actorUserId) continue;
+
+    const itemLat = toNumber(item?.lat);
+    const itemLng = toNumber(item?.lng);
+    const ownerProfile = ownerById.get(ownerId);
+    const ownerLat = toNumber(ownerProfile?.lat);
+    const ownerLng = toNumber(ownerProfile?.lng);
+    const targetLat = itemLat ?? ownerLat;
+    const targetLng = itemLng ?? ownerLng;
+    if (targetLat == null || targetLng == null) continue;
+
+    const distanceKm = getDistanceKm(lat, lng, targetLat, targetLng);
+    if (distanceKm > radiusKm) continue;
+
+    const relevance = scoreItemRelevance(item, requestTerms, requestText, requestCategory);
+    if (relevance.score < env.urgentMatchMinScore) continue;
+
+    const existing = bestByOwner.get(ownerId);
+    if (!existing || relevance.score > existing.score || (relevance.score === existing.score && distanceKm < existing.distanceKm)) {
+      bestByOwner.set(ownerId, {
+        itemId: String(item?.id || ''),
+        itemTitle: String(item?.title || 'an item'),
+        score: relevance.score,
+        matchedTerms: relevance.matchedTerms,
+        distanceKm,
+      });
+    }
+  }
+
+  if (!bestByOwner.size) return;
+
+  const stage = options?.stage || 'initial';
+  const prioritized = Array.from(bestByOwner.entries())
+    .sort((a, b) => {
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      return a[1].distanceKm - b[1].distanceKm;
+    })
+    .slice(0, Math.max(1, env.urgentMatchMaxRecipients));
+
+  await Promise.allSettled(prioritized.map(async ([ownerId, match]) => {
+    const title = stage === 'realert' ? 'Reminder: urgent help request nearby' : 'Urgent help request nearby';
+    const body = `Neighbor needs help now: ${request?.title || 'Urgent request'}. You have ${match.itemTitle}.`;
+
+    await Promise.allSettled([
+      sendPushToUser(ownerId, {
+        title,
+        body,
+        data: {
+          type: 'urgent_request_match',
+          priority: 'high',
+          stage,
+          request_id: String(request?.id || ''),
+          matched_item_id: match.itemId,
+        },
+      }),
+      persistNotification({
+        userId: ownerId,
+        title,
+        body,
+        type: 'urgent_request_match',
+        referenceId: String(request?.id || ''),
+        referenceType: 'request',
+        metadata: {
+          request_id: request?.id || null,
+          matched_item_id: match.itemId,
+          matched_item_title: match.itemTitle,
+          matched_terms: match.matchedTerms,
+          distance_km: Number(match.distanceKm.toFixed(2)),
+          match_score: match.score,
+          stage,
+          ai_signal: 'keyword_nlp_v1',
+        },
+      }),
+    ]);
+  }));
+}
+
+function scheduleUrgentRealertIfNeeded(requestId: string, userId: string) {
+  if (!env.urgentRealertEnabled) return;
+  const delayMs = Math.max(1, env.urgentRealertMinutes) * 60 * 1000;
+
+  const timer = setTimeout(async () => {
+    try {
+      const request = await Request.findOne({ id: requestId, status: 'open' }).lean();
+      if (!request) return;
+
+      const offerCount = await RequestOffer.countDocuments({ request_id: requestId });
+      if (offerCount > 0) return;
+
+      await notifyUrgentRequestMatches(request, userId, { stage: 'realert' });
+    } catch (error) {
+      console.error('[urgent-match] re-alert failed', error);
+    }
+  }, delayMs);
+
+  if (typeof (timer as any).unref === 'function') {
+    (timer as any).unref();
+  }
 }
 
 async function emitNotifications(recipients: string[], payload: {
@@ -957,6 +1153,12 @@ export async function createRequest(userId: string, data: Record<string, unknown
         referenceType: 'request',
         metadata: { request_title: request.title || null, request_id: request.id || null },
       });
+
+      const isUrgent = String(request.urgency || '').trim().toLowerCase() === 'urgent';
+      if (isUrgent) {
+        await notifyUrgentRequestMatches(request, userId);
+        scheduleUrgentRealertIfNeeded(String(request.id || ''), userId);
+      }
     }
   }
   return request;

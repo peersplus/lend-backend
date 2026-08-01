@@ -42,4 +42,9 @@ export const env = {
     oauthStateSecret: process.env.OAUTH_STATE_SECRET || 'change-me-in-production',
     // Public frontend URL (used for customer-facing links in emails)
     publicFrontendUrl: process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080',
+    urgentMatchMinScore: Number(process.env.URGENT_MATCH_MIN_SCORE || 2),
+    urgentMatchMaxRecipients: Number(process.env.URGENT_MATCH_MAX_RECIPIENTS || 25),
+    urgentMatchMaxItems: Number(process.env.URGENT_MATCH_MAX_ITEMS || 600),
+    urgentRealertEnabled: process.env.URGENT_REALERT_ENABLED !== 'false',
+    urgentRealertMinutes: Number(process.env.URGENT_REALERT_MINUTES || 10),
 };

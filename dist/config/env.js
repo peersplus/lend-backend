@@ -12,7 +12,7 @@ export const env = {
     nodeEnv: process.env.NODE_ENV || 'development',
     mongoUri: process.env.MONGODB_URI || '',
     corsOrigin: parseOrigins(process.env.CORS_ORIGIN || process.env.CORS_ORIGINS)[0] || 'http://localhost:8080',
-    corsOrigins: Array.from(new Set(parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || 'http://localhost:8080,http://localhost:8081'))),
+    corsOrigins: Array.from(new Set(parseOrigins(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN))),
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
     firebasePrivateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),

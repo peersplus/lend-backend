@@ -3,7 +3,7 @@ import * as profileService from '../services/profileService.js';
 
 export async function getProfileController(req: Request, res: Response) {
   const { id } = req.params;
-  const data = await profileService.getProfileByUserId(id);
+  const data = await profileService.getProfileByUserId(id);// check data.
   if (!data) return res.status(404).json({ error: 'Profile not found' });
   res.json({ data });
 }

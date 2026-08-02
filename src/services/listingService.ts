@@ -781,17 +781,40 @@ async function sendBookingStatusEmails(booking: any, previousStatus: string | nu
 async function sendRequestCreatedEmail(request: any) {
   const ownerId = String(request?.owner_id || '');
   if (!ownerId) return;
-  const ownerProfile = await Profile.findOne({ user_id: ownerId }).lean();
-  if (!ownerProfile?.email) return;
+
+  const profiles = await Profile.find({ is_active: true }, { user_id: 1, email: 1, full_name: 1 }).lean();
+  if (!profiles.length) return;
 
   const requestTitle = request?.title || 'your request';
   const appUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/requests`;
-  await sendMail({
-    to: ownerProfile.email,
-    subject: `Request created: ${requestTitle}`,
-    html: `<p>Hi ${ownerProfile.full_name || 'there'},</p><p>Your request <strong>${requestTitle}</strong> is now live.</p><p>Track responses here: <a href="${appUrl}">${appUrl}</a></p>`,
-    text: `Your request ${requestTitle} is now live. Track responses at ${appUrl}`,
-  });
+
+  const outbound: Array<{ to: string; subject: string; html: string; text: string }> = [];
+  const seenEmails = new Set<string>();
+
+  for (const profile of profiles as any[]) {
+    const email = String(profile?.email || '').trim();
+    if (!email) continue;
+
+    const normalizedEmail = email.toLowerCase();
+    if (seenEmails.has(normalizedEmail)) continue;
+    seenEmails.add(normalizedEmail);
+
+    const isOwner = String(profile?.user_id || '') === ownerId;
+    const person = String(profile?.full_name || '').trim() || email || 'there';
+    outbound.push({
+      to: email,
+      subject: isOwner ? `Request created: ${requestTitle}` : `New request posted: ${requestTitle}`,
+      html: isOwner
+        ? `<p>Hi ${person},</p><p>Your request <strong>${requestTitle}</strong> is now live.</p><p>Track responses here: <a href="${appUrl}">${appUrl}</a></p>`
+        : `<p>Hi ${person},</p><p>A new request <strong>${requestTitle}</strong> was posted.</p><p>Open requests here: <a href="${appUrl}">${appUrl}</a></p>`,
+      text: isOwner
+        ? `Your request ${requestTitle} is now live. Track responses at ${appUrl}`
+        : `A new request ${requestTitle} was posted. Open requests at ${appUrl}`,
+    });
+  }
+
+  if (!outbound.length) return;
+  await Promise.allSettled(outbound.map((mail) => sendMail(mail)));
 }
 
 async function sendRequestStatusFollowUpEmails(request: any, previousStatus?: string | null) {

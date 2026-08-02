@@ -3,8 +3,9 @@ import * as profileService from '../services/profileService.js';
 
 export async function getProfileController(req: Request, res: Response) {
   const { id } = req.params;
+  if (!id) return res.status(401).json({ error: 'Unauthorized' });
   const data = await profileService.getProfileByUserId(id);
-  if (!data) return res.status(404).json({ error: 'Profile not found' });
+  if (!data) return res.status(404).json({ error: 'Profile not found this time', requestId: id });
   res.json({ data });
 }
 

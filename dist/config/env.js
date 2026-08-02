@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 dotenv.config();
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const parseOrigins = (value) => (value || 'http://localhost:8080,http://localhost:8081, https://www.autoadvant.com, https://autoadvant.com, https://autoadvant-staging.web.app, https://autoadvant-staging.firebaseapp.com, https://autoadvant.web.app, https://autoadvant.firebaseapp.com')
+const parseOrigins = (value) => (value || 'http://localhost:8080,http://localhost:8081, https://www.autoadvant.com, https://autoadvant.com, https://autoadvant-staging.web.app, https://autoadvant-staging.firebaseapp.com, https://autoadvant.web.app, https://autoadvant.firebaseapp.com, https://peersplus.com, https://www.peersplus.com, https://lend.peersplus.com, https://www.lend.peersplus.com')
     .split(',')
     .map((origin) => origin.trim().replace(/^['"]|['"]$/g, ''))
     .filter(Boolean);

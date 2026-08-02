@@ -288,32 +288,42 @@ async function emitNotifications(recipients: string[], payload: {
   }));
 }
 
-async function notifyNearbyUsersForItem(item: any, actorUserId?: string) {
-  const lat = toNumber(item?.lat);
-  const lng = toNumber(item?.lng);
-  if (lat == null || lng == null) return;
+async function sendItemCreatedEmail(item: any) {
+  const ownerId = String(item?.owner_id || '').trim();
+  if (!ownerId) return;
 
+  const ownerProfile = await Profile.findOne({ user_id: ownerId }).lean();
+  const ownerEmail = String(ownerProfile?.email || '').trim();
+  if (!ownerEmail) return;
+
+  const itemTitle = String(item?.title || '').trim() || 'your item';
+  const ownerName = ownerProfile?.full_name || ownerEmail || 'there';
+  const appUrl = `${process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080'}/items`;
+
+  await sendMail({
+    to: ownerEmail,
+    subject: `Item listed: ${itemTitle}`,
+    html: `<p>Hi ${ownerName},</p><p>Your item <strong>${itemTitle}</strong> was added successfully.</p><p>You can view and manage it here: <a href="${appUrl}">${appUrl}</a></p>`,
+    text: `Hi ${ownerName}, your item ${itemTitle} was added successfully. Manage it at ${appUrl}`,
+  });
+}
+
+async function notifyNearbyUsersForItem(item: any, actorUserId?: string) {
   const profiles = await Profile.find({
     user_id: { $ne: actorUserId || null },
-    lat: { $ne: null },
-    lng: { $ne: null },
+  }, {
+    user_id: 1,
   }).lean();
 
   const nearbyUserIds = profiles
-    .filter((profile: any) => {
-      const profileLat = toNumber(profile?.lat);
-      const profileLng = toNumber(profile?.lng);
-      if (profileLat == null || profileLng == null) return false;
-      return getDistanceKm(lat, lng, profileLat, profileLng) <= 5;
-    })
     .map((profile: any) => profile.user_id)
     .filter(Boolean);
 
   if (!nearbyUserIds.length) return;
 
   await emitNotifications(nearbyUserIds, {
-    title: 'New item nearby',
-    body: `${item?.title || 'A new item'} was posted nearby.`,
+    title: 'Item added near you',
+    body: `${item?.title || 'A new item'} was added near you.`,
     type: 'item_nearby',
     referenceId: item?.id,
     referenceType: 'item',
@@ -903,7 +913,10 @@ export async function createItem(userId: string, data: Record<string, unknown>) 
     ...normalized,
   });
   const item = lean(doc);
-  await notifyNearbyUsersForItem(item, userId);
+  await Promise.allSettled([
+    notifyNearbyUsersForItem(item, userId),
+    sendItemCreatedEmail(item),
+  ]);
   return item;
 }
 

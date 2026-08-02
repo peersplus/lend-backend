@@ -278,7 +278,7 @@ apiRouter.patch('/fleet/transit-requests/:id/cancel', requireAuth, cancelTransit
 
 // Storage
 apiRouter.post('/storage/:bucket/upload', (req, res, next) => {
-  mediaUpload.single('file')(req, res, (error: any) => {
+  (mediaUpload.single('file') as unknown as express.RequestHandler)(req, res, (error: any) => {
     if (!error) return next();
     if (error?.code === 'LIMIT_FILE_SIZE') {
       res.status(413).json({ data: null, error: { message: 'File is too large. Max supported size is 300 MB.' } });
@@ -343,7 +343,7 @@ apiRouter.get('/email-templates/preview', requireAuth, previewEmailTemplateContr
 apiRouter.get('/customer/booking/:testDriveId', getCustomerBookingController);
 apiRouter.post('/customer/booking/:testDriveId/cancel', cancelCustomerBookingController);
 apiRouter.post('/customer/booking/:testDriveId/reschedule', rescheduleCustomerBookingController);
-apiRouter.post('/customer/booking/:testDriveId/documents', upload.single('file'), uploadCustomerDocumentController);
+apiRouter.post('/customer/booking/:testDriveId/documents', upload.single('file') as unknown as express.RequestHandler, uploadCustomerDocumentController);
 apiRouter.post('/customer/booking/:testDriveId/rebook', rebookCustomerController);
 
 // Test Drives

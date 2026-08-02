@@ -29,6 +29,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
+.agents/
+.claude/
 # Runtime-generated uploads
 apps/api/uploads/

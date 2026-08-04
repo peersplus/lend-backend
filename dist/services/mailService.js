@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
+import { wrapEmailHtml } from '../templates/emailTemplates.js';
 function smtpReady() {
     return Boolean(env.smtpHost && env.smtpPort && env.smtpUser && env.smtpPass && (env.mailFrom || env.smtpUser));
 }
@@ -42,7 +43,7 @@ export async function sendMail(input) {
             from: getFromAddress(input._dealerName),
             to: input.to,
             subject: input.subject,
-            html: input.html,
+            html: wrapEmailHtml(input.subject, input.html),
             text: input.text,
         });
         console.log(`[mail] ✅ Sent → ${input.to} | subject: "${input.subject}" | msgId: ${info.messageId}`);

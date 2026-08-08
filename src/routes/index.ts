@@ -96,6 +96,10 @@ import {
   outlookOAuthCallback,
 } from '../controllers/oauthController.js';
 import {
+  whatsappWebhookMessageController,
+  whatsappWebhookVerifyController,
+} from '../controllers/whatsappController.js';
+import {
   createDealerController,
   deleteDealerController,
   getDealerController,
@@ -360,6 +364,10 @@ apiRouter.get('/integrations', requireAuth, listIntegrationsController);
 apiRouter.put('/integrations/:type', requireAuth, upsertIntegrationController);
 apiRouter.delete('/integrations/:type', requireAuth, deleteIntegrationController);
 apiRouter.post('/integrations/:type/test', requireAuth, testIntegrationController);
+
+// WhatsApp Cloud API webhook (public)
+apiRouter.get('/integrations/whatsapp/webhook', whatsappWebhookVerifyController);
+apiRouter.post('/integrations/whatsapp/webhook', whatsappWebhookMessageController);
 
 // OAuth — calendar integrations (start requires auth; callback is open — state is HMAC-verified)
 apiRouter.get('/integrations/oauth/google/start', startGoogleOAuth);

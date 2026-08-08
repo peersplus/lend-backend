@@ -47,6 +47,16 @@ export const env = {
   oauthStateSecret: process.env.OAUTH_STATE_SECRET || 'change-me-in-production',
   // Public frontend URL (used for customer-facing links in emails)
   publicFrontendUrl: process.env.PUBLIC_FRONTEND_URL || 'http://localhost:8080',
+  whatsappWebhookVerifyToken:
+    process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+    || process.env.WHATSAPP_VERIFY_TOKEN
+    || process.env.WHATSAPP_WEBHOOK_TOKEN
+    || process.env.VERIFY_TOKEN
+    || '',
+  whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+  whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+  whatsappApiVersion: process.env.WHATSAPP_API_VERSION || 'v25.0',
+  whatsappAppSecret: process.env.WHATSAPP_APP_SECRET || '',
   urgentMatchMinScore: Number(process.env.URGENT_MATCH_MIN_SCORE || 2),
   urgentMatchMaxRecipients: Number(process.env.URGENT_MATCH_MAX_RECIPIENTS || 25),
   urgentMatchMaxItems: Number(process.env.URGENT_MATCH_MAX_ITEMS || 600),

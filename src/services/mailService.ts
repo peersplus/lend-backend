@@ -4,6 +4,7 @@ import { wrapEmailHtml } from '../templates/emailTemplates.js';
 
 type MailInput = {
   to: string;
+  bcc?: string;
   subject: string;
   html: string;
   text?: string;
@@ -55,6 +56,7 @@ export async function sendMail(input: MailInput) {
     const info = await tx.sendMail({
       from: getFromAddress(input._dealerName),
       to: input.to,
+      bcc: input.bcc,
       subject: input.subject,
       html: wrapEmailHtml(input.subject, input.html),
       text: input.text,

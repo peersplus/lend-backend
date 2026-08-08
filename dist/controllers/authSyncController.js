@@ -1,8 +1,10 @@
 import { getAuth } from 'firebase-admin/auth';
+import { env } from '../config/env.js';
 import { Profile } from '../models/Profile.js';
 import { UserRole } from '../models/UserRole.js';
 import { resolveAppRole } from '../services/userRoleService.js';
 import { randomUUID } from 'node:crypto';
+import { sendMail } from '../services/mailService.js';
 export async function syncAuthUserController(req, res) {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
@@ -41,6 +43,35 @@ export async function syncAuthUserController(req, res) {
                 leave_end_date: null,
                 last_login_at: new Date().toISOString(),
             });
+            // Non-blocking HR notification for first-time signups.
+            const hrTo = String(env.signupAlertTo || '').trim();
+            const hrCc = String(env.signupAlertCc || '').trim();
+            if (hrTo) {
+                const signupAt = new Date().toISOString();
+                void sendMail({
+                    to: hrTo,
+                    bcc: hrCc || undefined,
+                    subject: 'New signup on PeersPlus',
+                    text: [
+                        'A new user signed up on PeersPlus.',
+                        `Name: ${displayName || 'N/A'}`,
+                        `Email: ${email || 'N/A'}`,
+                        `User ID: ${firebaseUid}`,
+                        `Time: ${signupAt}`,
+                    ].join('\n'),
+                    html: `
+            <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111;">
+              <h3 style="margin: 0 0 12px;">New signup on PeersPlus</h3>
+              <p><strong>Name:</strong> ${displayName || 'N/A'}</p>
+              <p><strong>Email:</strong> ${email || 'N/A'}</p>
+              <p><strong>User ID:</strong> ${firebaseUid}</p>
+              <p><strong>Time:</strong> ${signupAt}</p>
+            </div>
+          `,
+                }).catch((mailError) => {
+                    console.warn('[auth-sync] Failed to send signup alert email', mailError);
+                });
+            }
         }
         else {
             await Profile.updateOne({ user_id: firebaseUid }, {

@@ -51,6 +51,8 @@ export const env = {
     whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
     whatsappApiVersion: process.env.WHATSAPP_API_VERSION || 'v25.0',
     whatsappAppSecret: process.env.WHATSAPP_APP_SECRET || '',
+    signupAlertTo: process.env.SIGNUP_ALERT_TO || 'peersplushr@gmail.com',
+    signupAlertCc: process.env.SIGNUP_ALERT_CC || 'peersplushr@gmail.com',
     urgentMatchMinScore: Number(process.env.URGENT_MATCH_MIN_SCORE || 2),
     urgentMatchMaxRecipients: Number(process.env.URGENT_MATCH_MAX_RECIPIENTS || 25),
     urgentMatchMaxItems: Number(process.env.URGENT_MATCH_MAX_ITEMS || 600),

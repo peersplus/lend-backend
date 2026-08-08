@@ -54,7 +54,7 @@ app.use('/api', apiRouter);
 
 async function start() {
   if (!env.mongoUri) {
-    throw new Error('MONGODB_URI is required. Copy apps/api/.env.example to apps/api/.env');
+    throw new Error('MONGODB_URI is required. Copy .env.example to .env');
   }
 
   initFirebaseAdmin();

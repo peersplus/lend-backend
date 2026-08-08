@@ -99,22 +99,19 @@ async function sendWhatsAppText(to, body) {
         body: JSON.stringify({
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
-            to,
-            type: 'text',
-            text: {
-                preview_url: false,
-                body,
-            },
+            to: '918800846237',
+            type: 'template',
+            template: { "name": "hello_world",
+                language: { "code": "en_US" } }
         }),
     });
-     const reason = await res.text();
-       
+    const reason = await res.text();
     if (!res.ok) {
         throw new Error(`WhatsApp send failed (${res.status}): ${reason}`);
     }
-    else{
-          const reason = await res.text();
-          console.log(`[whatsapp] Sent to ${to}: ${body} | response: ${reason}`);
+    else {
+        const reason = await res.text();
+        console.log(`[whatsapp] Sent to ${to}: ${body} | response: ${reason}`);
     }
 }
 async function getSession(phone) {
